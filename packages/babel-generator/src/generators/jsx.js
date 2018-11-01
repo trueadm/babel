@@ -35,6 +35,45 @@ export function JSXExpressionContainer(node: Object) {
   this.token("}");
 }
 
+export function JSXIfControlFlowBlock(node) {
+  this.token("{#if");
+  this.space();
+  this.print(node.test, node);
+  this.token("}");
+  this.print(node.consequent, node);
+  this.token("{/if}");
+  // This was what the React transform should do...
+  // we need to output the original code here
+  // this.print(node.test, node);
+  // this.space();
+  // this.token("?");
+  // this.space();
+
+  // if (node.consequent === null) {
+  //   this.word("null");
+  // } else if (Array.isArray(node.consequent)) {
+  //   this.ArrayExpression({
+  //     elements: node.consequent,
+  //   });
+  // } else {
+  //   this.print(node.consequent, node);
+  // }
+
+  // this.space();
+  // this.token(":");
+  // this.space();
+
+  // if (node.alternate === null) {
+  //   this.word("null");
+  // } else if (Array.isArray(node.alternate)) {
+  //   this.ArrayExpression({
+  //     elements: node.alternate,
+  //   });
+  // } else {
+  //   this.print(node.alternate, node);
+  // }
+}
+
 export function JSXSpreadChild(node: Object) {
   this.token("{");
   this.token("...");

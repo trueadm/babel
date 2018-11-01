@@ -194,6 +194,16 @@ export default class StatementParser extends ExpressionParser {
           } else {
             this.state = state;
           }
+        } else if (this.isContextual("tpl")) {
+          // peek ahead and see if next token is a function
+          const state = this.state.clone();
+          this.next();
+          if (this.match(tt._function) && !this.canInsertSemicolon()) {
+            this.expect(tt._function);
+            return this.parseFunction(node, true, false, false, true);
+          } else {
+            this.state = state;
+          }
         }
     }
 
@@ -840,6 +850,7 @@ export default class StatementParser extends ExpressionParser {
     isStatement: boolean,
     allowExpressionBody?: boolean,
     isAsync?: boolean,
+    isReactTemplate?: boolean,
     optionalId?: boolean,
   ): T {
     const oldInFunc = this.state.inFunction;
@@ -850,7 +861,7 @@ export default class StatementParser extends ExpressionParser {
     this.state.inMethod = false;
     this.state.inClassProperty = false;
 
-    this.initFunction(node, isAsync);
+    this.initFunction(node, isAsync, isReactTemplate);
 
     if (this.match(tt.star)) {
       if (node.async) {
@@ -1449,18 +1460,42 @@ export default class StatementParser extends ExpressionParser {
     );
   }
 
+  isReactTemplateFunction() {
+    if (!this.isContextual("tpl")) return false;
+
+    const { input, pos } = this.state;
+
+    skipWhiteSpace.lastIndex = pos;
+    const skip = skipWhiteSpace.exec(input);
+
+    if (!skip || !skip.length) return false;
+
+    const next = pos + skip[0].length;
+
+    return (
+      !lineBreak.test(input.slice(pos, next)) &&
+      input.slice(next, next + 8) === "function" &&
+      (next + 8 === input.length || !isIdentifierChar(input.charAt(next + 8)))
+    );
+  }
+
   parseExportDefaultExpression(): N.Expression | N.Declaration {
     const expr = this.startNode();
 
     const isAsync = this.isAsyncFunction();
+    const isReactTemplate = this.isReactTemplateFunction();
 
     if (this.eat(tt._function) || isAsync) {
       if (isAsync) {
         this.eatContextual("async");
         this.expect(tt._function);
       }
+      if (isReactTemplate) {
+        this.eatContextual("tpl");
+        this.expect(tt._function);
+      }
 
-      return this.parseFunction(expr, true, false, isAsync, true);
+      return this.parseFunction(expr, true, false, isAsync, isReactTemplate, true);
     } else if (this.match(tt._class)) {
       return this.parseClass(expr, true, true);
     } else if (this.match(tt.at)) {
@@ -1593,7 +1628,8 @@ export default class StatementParser extends ExpressionParser {
       this.state.type.keyword === "let" ||
       this.state.type.keyword === "function" ||
       this.state.type.keyword === "class" ||
-      this.isAsyncFunction()
+      this.isAsyncFunction() ||
+      this.isReactTemplateFunction()
     );
   }
 

@@ -569,6 +569,19 @@ class BlockScoping {
       basePath = ".argument" + basePath;
     }
 
+    debugger
+    // handlers react template functions
+    const hasReactTemplate = traverse.hasType(
+      fn.body,
+      "ReactTemplateExpression",
+      t.FUNCTION_TYPES,
+    );
+    if (hasReactTemplate) {
+      fn.reactTemplate = true;
+      call = t.awaitExpression(call);
+      basePath = ".argument" + basePath;
+    }
+
     let placeholderPath;
     let index;
     if (this.has.hasReturn || this.has.hasBreakContinue) {

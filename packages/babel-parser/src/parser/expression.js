@@ -485,11 +485,12 @@ export default class ExpressionParser extends LValParser {
         return this.finishNode(node, "OptionalMemberExpression");
       } else if (this.eat(tt.parenL)) {
         const possibleAsync = this.atPossibleAsync(base);
+        const possibleReactTemplate = this.atPossibleReactTemplate(base);
 
         node.callee = base;
         node.arguments = this.parseCallExpressionArguments(
           tt.parenR,
-          possibleAsync,
+          possibleAsync || possibleReactTemplate,
         );
         node.optional = true;
         return this.finishNode(node, "OptionalCallExpression");
@@ -523,6 +524,7 @@ export default class ExpressionParser extends LValParser {
       return this.finishNode(node, "MemberExpression");
     } else if (!noCalls && this.match(tt.parenL)) {
       const possibleAsync = this.atPossibleAsync(base);
+      const possibleReactTemplate = this.atPossibleReactTemplate(base);
       this.next();
 
       const node = this.startNodeAt(startPos, startLoc);
@@ -535,7 +537,7 @@ export default class ExpressionParser extends LValParser {
 
       node.arguments = this.parseCallExpressionArguments(
         tt.parenR,
-        possibleAsync,
+        possibleAsync || possibleReactTemplate,
         refTrailingCommaPos,
       );
       if (!state.optionalChainMember) {
@@ -558,6 +560,20 @@ export default class ExpressionParser extends LValParser {
           this.startNodeAt(startPos, startLoc),
           node,
         );
+      } else if (possibleReactTemplate && this.shouldParseReactTemplateArrow()) {
+          state.stop = true;
+  
+          if (refTrailingCommaPos.start > -1) {
+            this.raise(
+              refTrailingCommaPos.start,
+              "A trailing comma is not permitted after the rest element",
+            );
+          }
+  
+          return this.parseReactTemplateArrowFromCallExpression(
+            this.startNodeAt(startPos, startLoc),
+            node,
+          );
       } else {
         this.toReferencedList(node.arguments);
       }
@@ -608,6 +624,16 @@ export default class ExpressionParser extends LValParser {
     );
   }
 
+  atPossibleReactTemplate(base: N.Expression): boolean {
+    return (
+      !this.state.containsEsc &&
+      this.state.potentialArrowAt === base.start &&
+      base.type === "Identifier" &&
+      base.name === "tpl" &&
+      !this.canInsertSemicolon()
+    );
+  }
+
   finishCallExpression(node: N.CallExpression): N.CallExpression {
     if (node.callee.type === "Import") {
       if (node.arguments.length !== 1) {
@@ -638,7 +664,7 @@ export default class ExpressionParser extends LValParser {
 
   parseCallExpressionArguments(
     close: TokenType,
-    possibleAsyncArrow: boolean,
+    possibleAsyncArrowOrReactTemplate: boolean,
     refTrailingCommaPos?: Pos,
   ): $ReadOnlyArray<?N.Expression> {
     const elts = [];
@@ -662,15 +688,15 @@ export default class ExpressionParser extends LValParser {
       elts.push(
         this.parseExprListItem(
           false,
-          possibleAsyncArrow ? { start: 0 } : undefined,
-          possibleAsyncArrow ? { start: 0 } : undefined,
-          possibleAsyncArrow ? refTrailingCommaPos : undefined,
+          possibleAsyncArrowOrReactTemplate ? { start: 0 } : undefined,
+          possibleAsyncArrowOrReactTemplate ? { start: 0 } : undefined,
+          possibleAsyncArrowOrReactTemplate ? refTrailingCommaPos : undefined,
         ),
       );
     }
 
     // we found an async arrow function so let's not allow any inner parens
-    if (possibleAsyncArrow && innerParenStart && this.shouldParseAsyncArrow()) {
+    if (possibleAsyncArrowOrReactTemplate && innerParenStart && this.shouldParseAsyncArrow()) {
       this.unexpected();
     }
 
@@ -678,6 +704,10 @@ export default class ExpressionParser extends LValParser {
   }
 
   shouldParseAsyncArrow(): boolean {
+    return this.match(tt.arrow);
+  }
+
+  shouldParseReactTemplateArrow(): boolean {
     return this.match(tt.arrow);
   }
 
@@ -690,6 +720,15 @@ export default class ExpressionParser extends LValParser {
     this.expect(tt.arrow);
     this.parseArrowExpression(node, call.arguments, true);
     this.state.yieldInPossibleArrowParameters = oldYield;
+    return node;
+  }
+
+  parseReactTemplateArrowFromCallExpression(
+    node: N.ArrowFunctionExpression,
+    call: N.CallExpression,
+  ): N.ArrowFunctionExpression {
+    this.expect(tt.arrow);
+    this.parseArrowExpression(node, call.arguments, false, true);
     return node;
   }
 
@@ -788,7 +827,7 @@ export default class ExpressionParser extends LValParser {
           }
         } else if (
           !containsEsc &&
-          id.name === "async" &&
+          (id.name === "async" || id.name === "tpl") &&
           this.match(tt._function) &&
           !this.canInsertSemicolon()
         ) {
@@ -807,6 +846,17 @@ export default class ExpressionParser extends LValParser {
           // let foo = bar => {};
           this.parseArrowExpression(node, params, true);
           this.state.yieldInPossibleArrowParameters = oldYield;
+          return node;
+        } else if (
+          canBeArrow &&
+          !this.canInsertSemicolon() &&
+          id.name === "tpl" &&
+          this.match(tt.name)
+        ) {
+          const params = [this.parseIdentifier()];
+          this.expect(tt.arrow);
+          // let foo = bar => {};
+          this.parseArrowExpression(node, params, false, true);
           return node;
         }
 
@@ -1608,10 +1658,11 @@ export default class ExpressionParser extends LValParser {
 
   // Initialize empty function node.
 
-  initFunction(node: N.BodilessFunctionOrMethodBase, isAsync: ?boolean): void {
+  initFunction(node: N.BodilessFunctionOrMethodBase, isAsync: ?boolean, isReactTemplate: ?boolean): void {
     node.id = null;
     node.generator = false;
     node.async = !!isAsync;
+    node.reactTemplate = !!isReactTemplate;
   }
 
   // Parse object or class method.
@@ -1650,6 +1701,7 @@ export default class ExpressionParser extends LValParser {
     node: N.ArrowFunctionExpression,
     params?: ?(N.Expression[]),
     isAsync?: boolean,
+    isReactTemplate?: boolean,
   ): N.ArrowFunctionExpression {
     // if we got there, it's no more "yield in possible arrow parameters";
     // it's just "yield in arrow parameters"
@@ -1663,7 +1715,7 @@ export default class ExpressionParser extends LValParser {
 
     const oldInFunc = this.state.inFunction;
     this.state.inFunction = true;
-    this.initFunction(node, isAsync);
+    this.initFunction(node, isAsync, isReactTemplate);
     if (params) this.setArrowFunctionParameters(node, params);
 
     const oldInGenerator = this.state.inGenerator;

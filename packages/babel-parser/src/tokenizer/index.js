@@ -635,6 +635,10 @@ export default class Tokenizer extends LocationParser {
           ++this.state.pos;
           this.finishToken(tt.hash);
           return;
+        } else if (this.hasPlugin("jsx") && this.match(tt.braceL)) {
+          ++this.state.pos;
+          this.finishToken(tt.hash);
+          return;
         } else {
           this.raise(
             this.state.pos,
@@ -761,6 +765,11 @@ export default class Tokenizer extends LocationParser {
       // of the type given by its first argument.
 
       case charCodes.slash:
+        if (this.hasPlugin("jsx") && this.match(tt.braceL)) {
+          ++this.state.pos;
+          this.finishToken(tt.slash);
+          return;
+        }
         this.readToken_slash();
         return;
 
