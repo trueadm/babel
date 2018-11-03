@@ -11,7 +11,7 @@ export default declare((api, options) => {
 
   return {
     manipulateOptions(opts, parserOpts) {
-      parserOpts.plugins.push(["reactTemplates", { all }]);
+      parserOpts.plugins.push(["reactFunctions", { all }]);
     },
   };
 });

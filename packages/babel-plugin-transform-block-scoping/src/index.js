@@ -570,14 +570,14 @@ class BlockScoping {
     }
 
     debugger
-    // handlers react template functions
-    const hasReactTemplate = traverse.hasType(
+    // handlers react functions
+    const hasReactFunction = traverse.hasType(
       fn.body,
-      "ReactTemplateExpression",
+      "ReactFunctionExpression",
       t.FUNCTION_TYPES,
     );
-    if (hasReactTemplate) {
-      fn.reactTemplate = true;
+    if (hasReactFunction) {
+      fn.react = true;
       call = t.awaitExpression(call);
       basePath = ".argument" + basePath;
     }

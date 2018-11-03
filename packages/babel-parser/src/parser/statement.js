@@ -194,7 +194,7 @@ export default class StatementParser extends ExpressionParser {
           } else {
             this.state = state;
           }
-        } else if (this.isContextual("tpl")) {
+        } else if (this.isContextual("react")) {
           // peek ahead and see if next token is a function
           const state = this.state.clone();
           this.next();
@@ -850,7 +850,7 @@ export default class StatementParser extends ExpressionParser {
     isStatement: boolean,
     allowExpressionBody?: boolean,
     isAsync?: boolean,
-    isReactTemplate?: boolean,
+    isReactFunction?: boolean,
     optionalId?: boolean,
   ): T {
     const oldInFunc = this.state.inFunction;
@@ -861,7 +861,7 @@ export default class StatementParser extends ExpressionParser {
     this.state.inMethod = false;
     this.state.inClassProperty = false;
 
-    this.initFunction(node, isAsync, isReactTemplate);
+    this.initFunction(node, isAsync, isReactFunction);
 
     if (this.match(tt.star)) {
       if (node.async) {
@@ -1460,8 +1460,8 @@ export default class StatementParser extends ExpressionParser {
     );
   }
 
-  isReactTemplateFunction() {
-    if (!this.isContextual("tpl")) return false;
+  isReactFunction() {
+    if (!this.isContextual("react")) return false;
 
     const { input, pos } = this.state;
 
@@ -1483,19 +1483,26 @@ export default class StatementParser extends ExpressionParser {
     const expr = this.startNode();
 
     const isAsync = this.isAsyncFunction();
-    const isReactTemplate = this.isReactTemplateFunction();
+    const isReactFunction = this.isReactFunction();
 
     if (this.eat(tt._function) || isAsync) {
       if (isAsync) {
         this.eatContextual("async");
         this.expect(tt._function);
       }
-      if (isReactTemplate) {
-        this.eatContextual("tpl");
+      if (isReactFunction) {
+        this.eatContextual("react");
         this.expect(tt._function);
       }
 
-      return this.parseFunction(expr, true, false, isAsync, isReactTemplate, true);
+      return this.parseFunction(
+        expr,
+        true,
+        false,
+        isAsync,
+        isReactFunction,
+        true,
+      );
     } else if (this.match(tt._class)) {
       return this.parseClass(expr, true, true);
     } else if (this.match(tt.at)) {
@@ -1629,7 +1636,7 @@ export default class StatementParser extends ExpressionParser {
       this.state.type.keyword === "function" ||
       this.state.type.keyword === "class" ||
       this.isAsyncFunction() ||
-      this.isReactTemplateFunction()
+      this.isReactFunction()
     );
   }
 

@@ -1,18 +1,20 @@
 // @flow
 
 import * as charCodes from "charcodes";
-import { TokContext, types as tc } from "../../tokenizer/context";
+
+import XHTMLEntities from "./xhtml";
+import type Parser from "../../parser";
 import { TokenType, types as tt } from "../../tokenizer/types";
+import { TokContext, types as tc } from "../../tokenizer/context";
 import * as N from "../../types";
 import { isIdentifierChar, isIdentifierStart } from "../../util/identifier";
-import { isNewLine } from "../../util/whitespace";
-import XHTMLEntities from "./xhtml";
-
-import type Parser from "../../parser";
 import type { Pos, Position } from "../../util/location";
+import { isNewLine } from "../../util/whitespace";
 
 const HEX_NUMBER = /^[\da-fA-F]+$/;
 const DECIMAL_NUMBER = /^\d+$/;
+
+const generatorExpressionLabel = { kind: "gexp" };
 
 tc.j_oTag = new TokContext("<tag", false);
 tc.j_cTag = new TokContext("</tag", false);
@@ -86,6 +88,7 @@ export default (superClass: Class<Parser>): Class<Parser> =>
         const ch = this.input.charCodeAt(this.state.pos);
 
         switch (ch) {
+          case charCodes.asterisk:
           case charCodes.lessThan:
           case charCodes.leftCurlyBrace:
             if (this.state.pos === this.state.start) {
@@ -266,6 +269,8 @@ export default (superClass: Class<Parser>): Class<Parser> =>
     jsxParseAttributeValue(): N.Expression {
       let node;
       switch (this.state.type) {
+        case tt.star:
+          debugger;
         case tt.braceL:
           node = this.jsxParseExpressionContainer();
           if (node.expression.type === "JSXEmptyExpression") {
@@ -318,103 +323,6 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       return this.finishNode(node, "JSXSpreadChild");
     }
 
-    // Parse JSX control flow block
-
-    jsxParseControlFlowBlock() {
-      const evaluateIfBlock = () => {
-        let blockOrNode = [];
-        while (
-          !this.match(tt.braceL) ||
-          (this.lookahead().type !== tt.slash &&
-            this.lookahead().type !== tt.hash)
-        ) {
-          switch (this.state.type) {
-            case tt.jsxTagStart:
-              debugger;
-              break;
-
-            case tt.jsxText:
-              blockOrNode.push(this.parseExprAtom());
-              break;
-
-            case tt.braceL:
-              if (this.lookahead().type === tt.ellipsis) {
-                blockOrNode.push(this.jsxParseSpreadChild());
-              } else if (this.lookahead().type === tt.hash) {
-                blockOrNode.push(this.jsxParseControlFlowBlock());
-              } else {
-                blockOrNode.push(this.jsxParseExpressionContainer());
-              }
-              break;
-            default:
-              throw this.unexpected();
-          }
-        }
-        if (blockOrNode.length === 0) {
-          blockOrNode = null;
-        } else if (blockOrNode.length === 1) {
-          blockOrNode = blockOrNode[0];
-        } else {
-          blockOrNode = {
-            children: blockOrNode,
-            type: "JSXFragment",
-          };
-        }
-        return blockOrNode;
-      };
-      const evaluateIfConditions = (node: Object) => {
-        this.expect(tt.braceL);
-        if (this.match(tt.slash)) {
-          // closing if tag
-          this.next();
-          const closingControlFlowTag = this.state.value;
-          if (closingControlFlowTag !== "if") {
-            throw this.raise(
-              this.state.start,
-              "{#if ...} JSX control flow block should be closed with {/if}",
-            );
-          }
-          this.next();
-          this.expect(tt.braceR);
-          return this.finishNode(node, "JSXIfControlFlowBlock");
-        } else if (this.match(tt.hash)) {
-          // elseif/else block
-          this.next();
-          const alternateControlFlowTag = this.state.value;
-          if (alternateControlFlowTag === "else") {
-            this.next();
-            this.expect(tt.braceR);
-            node.alternate = evaluateIfBlock();
-            return evaluateIfConditions(node);
-          } else if (alternateControlFlowTag === "elseif") {
-            node.alternate = evaluateIfBegin();
-            return node;
-          } else {
-            throw this.unexpected();
-          }
-        }
-      };
-      const evaluateIfBegin = () => {
-        const node = this.startNode();
-        this.next();
-        node.test = this.parseExpression();
-        this.expect(tt.braceR);
-        node.consequent = evaluateIfBlock();
-        node.alternate = null;
-        evaluateIfConditions(node);
-        return this.finishNode(node, "JSXIfControlFlowBlock");
-      };
-
-      this.next();
-      this.expect(tt.hash);
-      const openingControlFlowTag = this.state.value;
-
-      if (openingControlFlowTag === "if") {
-        return evaluateIfBegin();
-      }
-      throw this.unexpected();
-    }
-
     // Parses JSX expression enclosed into curly brackets.
 
     jsxParseExpressionContainer(): N.JSXExpressionContainer {
@@ -427,6 +335,36 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       }
       this.expect(tt.braceR);
       return this.finishNode(node, "JSXExpressionContainer");
+    }
+
+    // Parses JSX generator expression enclosed into star-prefixed curly brackets
+
+    jsxParseGeneratorExpressionContainer() {
+      const node = this.startNode();
+
+      if (this.eat(tt.star)) {
+        node.expression = this.jsxParseGeneratorExpression();
+        return this.finishNode(node, "JSXGeneratorExpressionContainer");
+      } else {
+        this.unexpected();
+      }
+    }
+
+    // Parses generator expression
+
+    jsxParseGeneratorExpression() {
+      const oldInFunc = this.state.inFunction;
+      const oldInGen = this.state.inGenerator;
+      const oldLabels = this.state.labels;
+      this.state.inFunction = true;
+      this.state.inGenerator = true;
+      this.state.labels = [generatorExpressionLabel];
+      const node = this.parseBlock(true);
+      this.state.inFunction = oldInFunc;
+      this.state.inGenerator = oldInGen;
+      this.state.labels = oldLabels;
+
+      return node;
     }
 
     // Parses following JSX attribute name-value pair.
@@ -452,7 +390,6 @@ export default (superClass: Class<Parser>): Class<Parser> =>
     ): N.JSXOpeningElement {
       const node = this.startNodeAt(startPos, startLoc);
       if (this.match(tt.jsxTagEnd)) {
-        debugger;
         this.expect(tt.jsxTagEnd);
         return this.finishNode(node, "JSXOpeningFragment");
       }
@@ -519,11 +456,18 @@ export default (superClass: Class<Parser>): Class<Parser> =>
               children.push(this.parseExprAtom());
               break;
 
+            case tt.star:
+              if (this.lookahead().type === tt.braceL) {
+                children.push(this.jsxParseGeneratorExpressionContainer());
+              } else {
+                this.state.type = tt.jsxText;
+                children.push(this.parseExprAtom());
+              }
+              break;
+
             case tt.braceL:
               if (this.lookahead().type === tt.ellipsis) {
                 children.push(this.jsxParseSpreadChild());
-              } else if (this.lookahead().type === tt.hash) {
-                children.push(this.jsxParseControlFlowBlock());
               } else {
                 children.push(this.jsxParseExpressionContainer());
               }
